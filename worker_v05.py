@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 import threading
 import time
 import urllib.error
@@ -13,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import worker_v041  # Applies safe redirect compatibility patch.
 import worker_v04 as core
 
-VERSION = '0.5.1'
+VERSION = '0.5.2'
 MAX_BODY = 32 * 1024
 CLOCK_SKEW_SECONDS = 120
 NONCE_TTL_SECONDS = 300
@@ -189,6 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                 'version': VERSION,
                 'dgt_configured': bool(os.getenv('DGT_CDD_PASS')),
                 'auth_configured': bool(_raw_auth_secret()),
+                'openssl_available': bool(shutil.which('openssl')),
             })
             return
         self.send_json(404, {'ok': False, 'error': 'not_found'})
