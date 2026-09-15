@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import worker_v041  # Applies safe redirect compatibility patch.
 import worker_v04 as core
 
-VERSION = '0.6.2'
+VERSION = '0.6.3'
 MAX_BODY = 32 * 1024
 CLOCK_SKEW_SECONDS = 120
 NONCE_TTL_SECONDS = 300
@@ -171,6 +171,14 @@ def _parse_search_request(payload):
     return bbox, collection
 
 
+def _safe_network_log(stage, exc):
+    reason = getattr(exc, 'reason', exc)
+    reason_type = type(reason).__name__
+    errno = getattr(reason, 'errno', None)
+    text = str(reason).replace('\n', ' ').replace('\r', ' ')[:240]
+    print(f'DGT_NETWORK_DETAIL stage={stage} type={reason_type} errno={errno} detail={text}', flush=True)
+
+
 def _reset_session():
     global _cached_opener, _cached_at
     with _session_lock:
@@ -188,12 +196,16 @@ def _active_opener(force=False):
         password = os.getenv('DGT_CDD_PASS', '')
         if not password:
             raise RuntimeError('DGT_CDD_PASS_MISSING')
-        opener, _ = core.authenticate_and_search(
-            username,
-            password,
-            [-9.145, 38.715, -9.14, 38.72],
-            'MDT-50cm',
-        )
+        try:
+            opener, _ = core.authenticate_and_search(
+                username,
+                password,
+                [-9.145, 38.715, -9.14, 38.72],
+                'MDT-50cm',
+            )
+        except urllib.error.URLError as exc:
+            _safe_network_log('authenticate', exc)
+            raise
         _cached_opener = opener
         _cached_at = time.monotonic()
         return opener
@@ -205,16 +217,20 @@ def _search_once(opener, bbox, collection):
         'limit': 1000,
         'collections': [collection],
     }).encode('utf-8')
-    with core.request(
-        opener,
-        core.DGT_STAC,
-        method='POST',
-        data=payload,
-        extra_headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-    ) as response:
-        content_type = response.headers.get('Content-Type', '').lower()
-        raw = response.read(8 * 1024 * 1024)
-        status = response.status
+    try:
+        with core.request(
+            opener,
+            core.DGT_STAC,
+            method='POST',
+            data=payload,
+            extra_headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+        ) as response:
+            content_type = response.headers.get('Content-Type', '').lower()
+            raw = response.read(8 * 1024 * 1024)
+            status = response.status
+    except urllib.error.URLError as exc:
+        _safe_network_log('stac', exc)
+        raise
     if 'text/html' in content_type:
         raise RuntimeError('DGT_SESSION_NOT_VALID')
     if status != 200:
@@ -262,23 +278,27 @@ def _resolve_once(opener, href):
         },
         method='GET',
     )
-    with opener.open(req, timeout=30) as response:
-        magic = response.read(4)
-        status = getattr(response, 'status', None) or response.getcode()
-        final_url = response.geturl()
-        final = core.validate_https_public(final_url)
-        if status not in (200, 206):
-            raise RuntimeError(f'DGT_OBJECT_HTTP_{status}')
-        if magic not in core.TIFF_MAGIC:
-            raise RuntimeError('DGT_OBJECT_NOT_TIFF')
-        if final.hostname == core.ALLOWED_ASSET_HOST:
-            raise RuntimeError('DGT_OBJECT_REDIRECT_MISSING')
-        return {
-            'url': final_url,
-            'status': status,
-            'final_host': final.hostname,
-            'tiff_magic': True,
-        }
+    try:
+        with opener.open(req, timeout=30) as response:
+            magic = response.read(4)
+            status = getattr(response, 'status', None) or response.getcode()
+            final_url = response.geturl()
+            final = core.validate_https_public(final_url)
+    except urllib.error.URLError as exc:
+        _safe_network_log('resolve', exc)
+        raise
+    if status not in (200, 206):
+        raise RuntimeError(f'DGT_OBJECT_HTTP_{status}')
+    if magic not in core.TIFF_MAGIC:
+        raise RuntimeError('DGT_OBJECT_NOT_TIFF')
+    if final.hostname == core.ALLOWED_ASSET_HOST:
+        raise RuntimeError('DGT_OBJECT_REDIRECT_MISSING')
+    return {
+        'url': final_url,
+        'status': status,
+        'final_host': final.hostname,
+        'tiff_magic': True,
+    }
 
 
 def resolve_asset(href):
