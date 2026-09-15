@@ -15,13 +15,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import worker_v041  # Applies safe redirect compatibility patch.
 import worker_v04 as core
 
-VERSION = '0.6.1'
+VERSION = '0.6.2'
 MAX_BODY = 32 * 1024
 CLOCK_SKEW_SECONDS = 120
 NONCE_TTL_SECONDS = 300
 SESSION_TTL_SECONDS = 15 * 60
 RATE_WINDOW_SECONDS = 60
-RATE_MAX_REQUESTS = 30
+RATE_MAX_REQUESTS = 20
+SEARCH_MAX_AREA_KM2 = 200.0
 SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 ALLOWED_COLLECTIONS = {'MDT-50cm', 'MDS-50cm', 'MDT-2m', 'MDS-2m'}
 
@@ -142,11 +143,9 @@ def _verify_resolve_request(payload):
     return href
 
 
-def _verify_search_request(payload):
+def _parse_search_request(payload):
     bbox_token = payload.get('bbox')
     collection = payload.get('collection')
-    ts = payload.get('ts')
-    nonce = payload.get('nonce')
     if collection not in ALLOWED_COLLECTIONS:
         raise ValueError('INVALID_COLLECTION')
     if not isinstance(bbox_token, str) or len(bbox_token) > 120:
@@ -165,7 +164,10 @@ def _verify_search_request(payload):
         raise ValueError('INVALID_BBOX')
     if west < -9.7 or east > -6.0 or south < 36.8 or north > 42.3:
         raise ValueError('BBOX_OUTSIDE_MAINLAND_PORTUGAL')
-    _verify_signature(payload, f'search-v1\n{ts}\n{nonce}\n{collection}\n{bbox_token}')
+    mid_lat = math.radians((south + north) / 2.0)
+    area_km2 = abs((east - west) * 111.32 * math.cos(mid_lat) * (north - south) * 111.32)
+    if area_km2 > SEARCH_MAX_AREA_KM2:
+        raise ValueError('SEARCH_AREA_TOO_LARGE')
     return bbox, collection
 
 
@@ -338,6 +340,7 @@ class Handler(BaseHTTPRequestHandler):
                 'dgt_configured': bool(os.getenv('DGT_CDD_PASS')),
                 'auth_scheme': 'ed25519-v1',
                 'auth_configured': configured,
+                'search_scope': 'public-metadata-limited',
             })
             return
         self.send_json(404, {'ok': False, 'error': 'not_found'})
@@ -362,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError('INVALID_BODY')
             if self.path == '/v1/search':
-                bbox, collection = _verify_search_request(payload)
+                bbox, collection = _parse_search_request(payload)
                 assets = search_assets(bbox, collection)
                 self.send_json(200, {
                     'ok': True,
