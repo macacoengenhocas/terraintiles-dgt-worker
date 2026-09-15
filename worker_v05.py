@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import worker_v041  # Applies safe redirect compatibility patch.
 import worker_v04 as core
 
-VERSION = '0.5.0'
+VERSION = '0.5.1'
 MAX_BODY = 32 * 1024
 CLOCK_SKEW_SECONDS = 120
 NONCE_TTL_SECONDS = 300
@@ -30,7 +30,7 @@ _cached_at = 0.0
 
 
 def _raw_auth_secret():
-    return os.getenv('TT_WORKER_AUTH_SECRET', '') or os.getenv('DGT_CDD_PASS', '')
+    return os.getenv('TT_WORKER_AUTH_SECRET', '')
 
 
 def _service_key():
