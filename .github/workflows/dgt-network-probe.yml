@@ -1,0 +1,42 @@
+name: DGT network probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dgt-network-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe DGT HTTPS reachability
+        shell: python
+        run: |
+          import socket, ssl
+          hosts = ['cdd.dgterritorio.gov.pt', 'auth.cdd.dgterritorio.gov.pt']
+          for host in hosts:
+              infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+              print('HOST', host, 'FAMILIES', sorted({i[0] for i in infos}))
+              ok = False
+              last = None
+              for family, socktype, proto, _, sockaddr in infos:
+                  s = socket.socket(family, socktype, proto)
+                  s.settimeout(5)
+                  try:
+                      s.connect(sockaddr)
+                      ctx = ssl.create_default_context()
+                      with ctx.wrap_socket(s, server_hostname=host) as tls:
+                          print('HTTPS_OK', host, tls.version())
+                      ok = True
+                      break
+                  except Exception as exc:
+                      last = f'{type(exc).__name__}: {exc}'
+                  finally:
+                      try:
+                          s.close()
+                      except Exception:
+                          pass
+              if not ok:
+                  raise SystemExit(f'HTTPS_FAIL {host} {last}')
