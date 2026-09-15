@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import worker_v041  # Applies safe redirect compatibility patch.
 import worker_v04 as core
 
-VERSION = '0.5.2'
+VERSION = '0.5.3'
 MAX_BODY = 32 * 1024
 CLOCK_SKEW_SECONDS = 120
 NONCE_TTL_SECONDS = 300
@@ -228,6 +228,7 @@ def main():
     port = int(os.getenv('PORT', '10000'))
     server = ThreadingHTTPServer(('0.0.0.0', port), Handler)
     print(f'TerrainTiles DGT worker {VERSION} listening on :{port}', flush=True)
+    print(f'OPENSSL_AVAILABLE {bool(shutil.which("openssl"))}', flush=True)
     server.serve_forever()
 
 
