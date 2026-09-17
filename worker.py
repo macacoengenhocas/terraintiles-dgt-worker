@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from worker_v072 import main
+from worker_v073 import main
 
 if __name__ == '__main__':
     main()
