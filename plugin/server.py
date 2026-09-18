@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 from typing import Annotated, Literal
+from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 from starlette.requests import Request
@@ -13,7 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 RESOURCE_URI = "ui://terraintiles/builder-v1.html"
 TERRAIN_ORIGIN = "https://terraintiles-web-g1o5ka.v2.appdeploy.ai"
 PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
@@ -222,7 +223,9 @@ BUILDER_TOOL_META = {
     description=(
         "Use this tool when the user wants an interactive map, wants to choose an area "
         "visually, change advanced terrain/print settings, generate and validate the model, "
-        "or export STL/3MF. It renders the TerrainTiles builder inside the conversation."
+        "or export STL/3MF. Pass any location, bounding box, scale and printer settings already "
+        "known from the conversation so the in-chat builder opens preconfigured instead of "
+        "making the user enter them again."
     ),
     annotations=READ_ONLY_OPEN,
     meta=BUILDER_TOOL_META,
@@ -230,13 +233,66 @@ BUILDER_TOOL_META = {
 def render_terrain_builder(
     note: Annotated[
         str,
-        Field(max_length=500, description="Optional short task context to show alongside the builder."),
+        Field(max_length=500, description="Optional short task context to preserve with the builder."),
     ] = "",
+    bbox: Annotated[
+        list[float] | None,
+        Field(description="Optional WGS84 [west, south, east, north] to preselect."),
+    ] = None,
+    location: Annotated[
+        str,
+        Field(max_length=200, description="Optional place name or coordinates when no bbox is known."),
+    ] = "",
+    scale: Annotated[
+        float | None,
+        Field(description="Optional scale denominator, e.g. 2500 for 1:2500."),
+    ] = None,
+    width_mm: Annotated[
+        float | None,
+        Field(description="Optional target physical model width in millimetres."),
+    ] = None,
+    elevation: Literal["auto_mdt", "auto_mds", "global_dem"] = "auto_mdt",
+    mode: Literal["simple", "engineering"] = "simple",
+    printer_bed_x_mm: float | None = None,
+    printer_bed_y_mm: float | None = None,
+    printer_bed_z_mm: float | None = None,
 ) -> BuilderResult:
-    """Render the existing TerrainTiles workflow in an MCP Apps interface."""
+    """Render TerrainTiles in chat and carry known planning parameters into its UI."""
+    params: dict[str, str] = {"tt_embed": "chatgpt"}
+
+    if bbox is not None:
+        _bbox_dimensions_m(bbox)
+        params["bbox"] = ",".join(f"{float(value):.8f}".rstrip("0").rstrip(".") for value in bbox)
+    elif location.strip():
+        params["location"] = location.strip()
+
+    if scale is not None:
+        if not math.isfinite(scale) or not 100 <= scale <= 200_000:
+            raise ValueError("scale must be between 100 and 200000.")
+        params["scale"] = f"{float(scale):g}"
+
+    if width_mm is not None:
+        if not math.isfinite(width_mm) or not 10 <= width_mm <= 2000:
+            raise ValueError("width_mm must be between 10 and 2000.")
+        params["width_mm"] = f"{float(width_mm):g}"
+
+    params["elevation"] = elevation
+    if mode == "engineering":
+        params["mode"] = "engineering"
+
+    beds = (printer_bed_x_mm, printer_bed_y_mm, printer_bed_z_mm)
+    supplied_beds = [value is not None for value in beds]
+    if any(supplied_beds):
+        if not all(supplied_beds):
+            raise ValueError("Provide all three printer bed dimensions or none of them.")
+        numeric_beds = [float(value) for value in beds if value is not None]
+        if not all(math.isfinite(value) and 20 <= value <= 2000 for value in numeric_beds):
+            raise ValueError("Printer bed dimensions must each be between 20 and 2000 mm.")
+        params["bed_x"], params["bed_y"], params["bed_z"] = [f"{value:g}" for value in numeric_beds]
+
     return BuilderResult(
         mode="builder",
-        builder_url=f"{TERRAIN_ORIGIN}/?embed=1",
+        builder_url=f"{TERRAIN_ORIGIN}/?{urlencode(params)}",
         note=note.strip(),
     )
 
@@ -283,7 +339,7 @@ def _builder_resource_meta() -> dict:
 )
 def terrain_builder_resource() -> str:
     """Return the MCP Apps HTML wrapper for the hosted TerrainTiles builder."""
-    frame_url = f"{TERRAIN_ORIGIN}/?embed=1"
+    frame_url = f"{TERRAIN_ORIGIN}/?tt_embed=chatgpt"
     return f"""<!doctype html>
 <html lang="pt-PT">
 <head>
@@ -303,8 +359,31 @@ iframe{{display:block;width:100%;height:680px;border:0;background:#090d0f}}
   <strong>TerrainTiles · território real → modelo imprimível</strong>
   <button id="full" type="button">Ecrã inteiro</button>
 </div>
-<iframe title="TerrainTiles builder" src="{frame_url}" allow="fullscreen"></iframe>
+<iframe id="builder" title="TerrainTiles builder" src="{frame_url}" allow="fullscreen"></iframe>
 <script>
+const builder = document.getElementById('builder');
+const allowedPrefix = {TERRAIN_ORIGIN!r} + '/?';
+
+function applyToolOutput(output) {{
+  const url = output && output.builder_url;
+  if (typeof url === 'string' && url.startsWith(allowedPrefix) && builder.src !== url) {{
+    builder.src = url;
+  }}
+}}
+
+if (window.openai && window.openai.toolOutput) {{
+  applyToolOutput(window.openai.toolOutput);
+}}
+
+window.addEventListener('message', function (event) {{
+  if (event.source !== window.parent) return;
+  const message = event.data;
+  if (!message || message.jsonrpc !== '2.0') return;
+  if (message.method === 'ui/notifications/tool-result') {{
+    applyToolOutput(message.params && message.params.structuredContent);
+  }}
+}});
+
 document.getElementById('full').addEventListener('click', function () {{
   if (window.openai && window.openai.requestDisplayMode) {{
     window.openai.requestDisplayMode({{ mode: 'fullscreen' }});
