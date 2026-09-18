@@ -77,6 +77,27 @@ async def probe(mode: str) -> dict:
         assert capabilities.is_error is False
         assert capabilities.structured_content["account_required"] is False
 
+        builder = await client.call_tool(
+            "render_terrain_builder",
+            {
+                "note": "Lisbon prefill",
+                "bbox": [-9.145, 38.720, -9.138, 38.726],
+                "scale": 2500,
+                "elevation": "auto_mds",
+                "mode": "engineering",
+                "printer_bed_x_mm": 220,
+                "printer_bed_y_mm": 220,
+                "printer_bed_z_mm": 250,
+            },
+        )
+        assert builder.is_error is False
+        builder_url = builder.structured_content["builder_url"]
+        assert "tt_embed=chatgpt" in builder_url
+        assert "scale=2500" in builder_url
+        assert "elevation=auto_mds" in builder_url
+        assert "mode=engineering" in builder_url
+        assert "bed_x=220" in builder_url
+
         resources = await client.list_resources()
         resource = next(
             item
@@ -89,12 +110,15 @@ async def probe(mode: str) -> dict:
         text = content.contents[0].text
         assert "TerrainTiles builder" in text
         assert "terraintiles-web-g1o5ka.v2.appdeploy.ai" in text
+        assert "tt_embed=chatgpt" in text
+        assert "ui/notifications/tool-result" in text
 
         return {
             "mode": mode,
             "protocol_version": str(client.protocol_version),
             "tools": sorted(tools),
             "tiles": plan.structured_content["total_tiles"],
+            "builder_prefill": builder_url,
             "resource": str(resource.uri),
         }
 
