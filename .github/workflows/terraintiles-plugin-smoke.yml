@@ -1,0 +1,29 @@
+name: TerrainTiles Plugin MCP Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugin/**'
+      - '.github/workflows/terraintiles-plugin-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  remote-mcp-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install official MCP SDK
+        run: python -m pip install -r plugin/requirements.txt
+      - name: Probe production MCP
+        env:
+          TERRAINTILES_MCP_URL: https://terraintiles-chatgpt-plugin.onrender.com/mcp
+          EXPECTED_GIT_SHA: ${{ github.sha }}
+        run: python plugin/smoke_remote.py
