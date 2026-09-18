@@ -334,6 +334,7 @@ async def health(_: Request) -> JSONResponse:
             "ok": True,
             "service": "TerrainTiles MCP",
             "version": VERSION,
+            "git_commit": os.environ.get("RENDER_GIT_COMMIT", ""),
             "mcp_path": "/mcp",
             "tools": [
                 "terrain_capabilities",
