@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "terraintiles",
+  "version": "0.1.0",
+  "description": "Turn real terrain into modular 3D-printable topographic models with scale and printer-fit planning.",
+  "homepage": "https://terraintiles-web-g1o5ka.v2.appdeploy.ai"
+}
