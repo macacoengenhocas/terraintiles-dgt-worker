@@ -2,6 +2,8 @@
 import html
 import json
 import os
+import threading
+import re
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -96,6 +98,33 @@ class Handler(visible.Handler):
         super().do_GET()
 
 
+def _safe_probe_error(exc):
+    # No URLs, cookies, passwords, hrefs or signed redirect query strings in logs.
+    return re.sub(r'[^A-Z0-9_]', '_', str(exc).split(':', 1)[0].upper())[:100]
+
+
+def _dgt_asset_magic_selfcheck():
+    stage = 'search'
+    try:
+        assets = qa.mcp.core.search_assets([-9.145, 38.715, -9.14, 38.72], 'MDT-50cm')
+        if not assets:
+            print('DGT_ASSET_PROBE stage=search ok=false reason=NO_ASSETS', flush=True)
+            return
+        print('DGT_ASSET_PROBE stage=search ok=true count=' + str(len(assets)), flush=True)
+        stage = 'resolve'
+        resolved = qa.mcp.core.resolve_asset(assets[0])
+        print(
+            'DGT_ASSET_PROBE stage=resolve ok=' +
+            str(bool(resolved.get('tiff_magic'))).lower() +
+            ' tiff_magic=' + str(bool(resolved.get('tiff_magic'))).lower() +
+            ' http_status=' + str(resolved.get('status')) +
+            ' host_valid=' + str(bool(resolved.get('final_host'))).lower(),
+            flush=True,
+        )
+    except Exception as exc:
+        print('DGT_ASSET_PROBE stage=' + stage + ' ok=false code=' + _safe_probe_error(exc), flush=True)
+
+
 def main():
     port = int(os.getenv('PORT', '10000'))
     public_key_ok = True
@@ -108,6 +137,8 @@ def main():
     print('ED25519_PUBLIC_KEY_CONFIGURED', public_key_ok, flush=True)
     print('MCP_ENDPOINT', qa.mcp.MCP_ORIGIN + '/mcp', flush=True)
     print('MCP_FULL_SELF_CHECK', '/mcp/check.html', flush=True)
+    if os.getenv('TT_DGT_ASSET_PROBE_ON_START', '0').lower() == '1':
+        threading.Thread(target=_dgt_asset_magic_selfcheck, daemon=True).start()
     server.serve_forever()
 
 
