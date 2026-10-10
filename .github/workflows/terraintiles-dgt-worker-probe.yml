@@ -1,0 +1,67 @@
+name: TerrainTiles DGT Worker Live Probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/terraintiles-dgt-worker-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dgt-worker-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Frankfurt worker health and actual Lisbon MDT-50cm STAC search
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+          import urllib.error
+
+          root = "https://terraintiles-dgt-worker-frankfurt.onrender.com"
+          def request(path, data=None, timeout=100):
+              req = urllib.request.Request(
+                  root + path,
+                  method="POST" if data is not None else "GET",
+                  data=None if data is None else json.dumps(data).encode("utf-8"),
+                  headers={
+                      "User-Agent": "TerrainTiles-CI-Availability/1.0",
+                      "Content-Type": "application/json",
+                      "Accept": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  return response.status, json.loads(response.read(300000).decode("utf-8"))
+
+          status = None
+          health = {}
+          for attempt in range(6):
+              try:
+                  status, health = request("/health", timeout=30)
+                  if status == 200 and health.get("ok"): break
+              except Exception as exc:
+                  print("Worker warming attempt", attempt+1, type(exc).__name__)
+              time.sleep(10)
+          if not health.get("ok"): raise SystemExit("FAIL: worker health unavailable")
+          print("Worker health OK", "version="+str(health.get("version")), "dgt_configured="+str(health.get("dgt_configured")))
+          if not health.get("dgt_configured"): raise SystemExit("FAIL: DGT credentials missing on worker")
+
+          payload = {"bbox":"-9.145,38.715,-9.14,38.72", "collection":"MDT-50cm"}
+          try:
+              st, data = request("/v1/search", payload, timeout=110)
+          except urllib.error.HTTPError as exc:
+              # Never print asset links, credentials, cookies, or raw error body.
+              print("FAIL: DGT_STAC_WORKER_HTTP_"+str(exc.code))
+              raise SystemExit(1)
+          except Exception as exc:
+              print("FAIL: DGT_SEARCH_"+type(exc).__name__)
+              raise SystemExit(1)
+          count = len(data.get("assets", [])) if isinstance(data, dict) and isinstance(data.get("assets"), list) else 0
+          print(json.dumps({"http_status":st,"ok":data.get("ok") is True,"collection":data.get("collection"),"asset_count":count},sort_keys=True))
+          if st != 200 or data.get("ok") is not True or count < 1: raise SystemExit("FAIL: no DGT raster assets")
+          print("PASS: live worker authenticated DGT STAC search returned raster assets")
+          PY
